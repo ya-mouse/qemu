@@ -89,6 +89,9 @@
 #define PCI_VENDOR_ID_REALTEK            0x10ec
 #define PCI_DEVICE_ID_REALTEK_8139       0x8139
 
+#define PCI_VENDOR_ID_BROADCOM           0x14e4
+#define PCI_DEVICE_ID_BCM5709            0x1639
+
 #define PCI_VENDOR_ID_XILINX             0x10ee
 
 #define PCI_VENDOR_ID_VIA                0x1106
