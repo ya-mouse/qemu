@@ -1252,11 +1252,17 @@ static void (*macreg_writeops[])(E1000State *, int, uint32_t) = {
 
 enum { NWRITEOPS = ARRAY_SIZE(macreg_writeops) };
 
+static void bcm5709_write_config(PCIDevice *pci_dev, uint32_t addr, uint32_t val_in, int l);
+
+static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
+                                    uint32_t address, int len);
+
 static void
 e1000_mmio_write(void *opaque, hwaddr addr, uint64_t val,
                  unsigned size)
 {
     E1000State *s = opaque;
+    PCIDevice *pd = PCI_DEVICE(s);
     unsigned int index = (addr & 0x1ffff) >> 2;
 
     DBGOUT(MMIO, "MMIO write addr=0x%08x,val=0x%08"PRIx64"\n",
@@ -1265,6 +1271,11 @@ e1000_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         macreg_writeops[index](s, index, val);
     } else if (index < NREADOPS && macreg_readops[index]) {
         DBGOUT(MMIO, "e1000_mmio_writel RO %x: 0x%04"PRIx64"\n", index<<2, val);
+    } else if (addr > 0x80) {
+        bcm5709_write_config(pd, 0x78, addr, size);
+        bcm5709_write_config(pd, 0x80, val, size);
+    } else if (addr == 0x68) {
+        bcm5709_write_config(pd, addr, val, size);
     } else {
         DBGOUT(UNKNOWN, "MMIO unknown write addr=0x%08x,val=0x%08"PRIx64"\n",
                index<<2, val);
@@ -1275,16 +1286,23 @@ static uint64_t
 e1000_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     E1000State *s = opaque;
+    PCIDevice *pd = PCI_DEVICE(s);
     unsigned int index = (addr & 0x1ffff) >> 2;
 
-    DBGOUT(MMIO, "MMIO read addr=0x%08x\n",
-           (unsigned int)addr);
     if (index < NREADOPS && macreg_readops[index])
     {
+        DBGOUT(MMIO, "MMIO read addr=0x%08x\n",
+              (unsigned int)addr);
         return macreg_readops[index](s, index);
     }
-    DBGOUT(UNKNOWN, "MMIO unknown read addr=0x%08x\n", index<<2);
-    return 0;
+
+    if (addr > 0x80) {
+        bcm5709_write_config(pd, 0x78, addr, size);
+        return bcm5709_read_config(pd, 0x80, size);
+    } else {
+        DBGOUT(UNKNOWN, "MMIO unknown read addr=0x%08x\n", index<<2);
+        return 0;
+    }
 }
 
 static const MemoryRegionOps e1000_mmio_ops = {
@@ -1636,6 +1654,7 @@ static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
 {
     uint32_t reg;
     uint32_t val = 0;
+    static uint32_t alloc = 0x0;
 #if 0
     uint32_t seg, eip;
     CPUState *cpu;
@@ -1661,7 +1680,7 @@ static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
             DBGOUT(UNKNOWN,"...BNX2_MISC_COMMAND (%x): %08x\n", reg, val);
             break;
         case 0x808: // BNX2_MISC_ID
-            val = 0x57092000; // BNX2_CHIP_REV_Cx
+            val = 0x57091000; // BNX2_CHIP_REV_Cx
             DBGOUT(UNKNOWN,"...BNX2_MISC_ID (%x): %08x\n", reg, val);
             break;
         case 0x814: // BNX2_MISC_ENABLE_CLR_BITS
@@ -1698,7 +1717,8 @@ static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
             DBGOUT(UNKNOWN,"...BNX2_MQ_CONFIG (%x): %08x\n", reg, val);
             break;
         case 0x4448: // BUFMGR_TX_DMA_ALLOC_RESP
-//            val = 0x0;
+//            alloc += 0x100;
+            val = alloc;
             DBGOUT(UNKNOWN,"...BUFMGR_TX_DMA_ALLOC_RESP (%x): %08x\n", reg, val);
             break;
         case 0x5008: // BNX2_TBDR_CONFIG
@@ -1712,8 +1732,13 @@ static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
             memcpy(&val, d->bnx2_nvram + d->bnx2_nvram_off, 4);
             DBGOUT(UNKNOWN,"...BNX2_NVM_READ (%x): %04x\n", d->bnx2_nvram_off, val);
             break;
+        case 0x6414: // BNX2_NVM_CFG1
+            val = 0x0;
+            DBGOUT(UNKNOWN,"...BNX2_NVM_CFG1: %04x\n", val);
+            break;
         case 0x6420: // BNX2_NVM_SW_ARB
             val = (1L<<10); // BNX2_NVM_SW_ARB_ARB_ARB2
+//            val = (1L<<9); // BNX2_NVM_SW_ARB_ARB_ARB2
             DBGOUT(UNKNOWN,"...BNX2_NVM_SW_ARB (%x): %04x\n", reg, val);
             break;
         case 0x6800: // BNX2_HC_COMMAND
@@ -2069,6 +2094,7 @@ static void bcm5709_write_config(PCIDevice *pci_dev, uint32_t addr, uint32_t val
             case 0x6400:
             case 0x640c:
             case 0x6410: // BNX2_NVM_READ
+            case 0x6414: // BNX2_NVM_CFG1
             case 0x6420:
             case 0x6424:
             case 0x6800:
