@@ -97,6 +97,12 @@ typedef struct E1000State_st {
     uint32_t rv2p_lo;
     FILE *fp[8];
 
+    uint32_t cpu_txp[10];
+    uint32_t cpu_rxp[10];
+    uint32_t cpu_tpat[10];
+    uint32_t cpu_com[10];
+    uint32_t cpu_cp[10];
+
     uint32_t rxbuf_size;
     uint32_t rxbuf_min_shift;
     struct e1000_tx {
@@ -1265,9 +1271,9 @@ e1000_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     PCIDevice *pd = PCI_DEVICE(s);
     unsigned int index = (addr & 0x1ffff) >> 2;
 
-    DBGOUT(MMIO, "MMIO write addr=0x%08x,val=0x%08"PRIx64"\n",
-           (unsigned int)addr, val);
     if (index < NWRITEOPS && macreg_writeops[index]) {
+        DBGOUT(MMIO, "MMIO write addr=0x%08x,val=0x%08"PRIx64"\n",
+               (unsigned int)addr, val);
         macreg_writeops[index](s, index, val);
     } else if (index < NREADOPS && macreg_readops[index]) {
         DBGOUT(MMIO, "e1000_mmio_writel RO %x: 0x%04"PRIx64"\n", index<<2, val);
@@ -1673,19 +1679,31 @@ static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
     if (address == 0x80) {
         reg = (pci_dev->config[0x7b] << 24) | (pci_dev->config[0x7a] << 16) | (pci_dev->config[0x79] << 8) | pci_dev->config[0x78];
         switch (reg) {
+        case 0xb4: // BNX2_PCICFG_DEVICE_CONTROL
+            val = 0x0;
+            DBGOUT(UNKNOWN,"...BNX2_PCICFG_DEVICE_CONTROL: %08x\n", val);
+            break;
         case 0x408: // BNX2_PCI_CONFIG_2
             DBGOUT(UNKNOWN,"...BNX2_PCI_CONFIG_2 (%x): %08x\n", reg, val);
+            break;
+        case 0x418: // BNX2_PCI_SWAP_DIAG0
+            val = 0x01020304;
+            DBGOUT(UNKNOWN,"...BNX2_PCI_SWAP_DIAG0: %08x\n", val);
             break;
         case 0x800: // BNX2_MISC_COMMAND
             DBGOUT(UNKNOWN,"...BNX2_MISC_COMMAND (%x): %08x\n", reg, val);
             break;
         case 0x808: // BNX2_MISC_ID
-            val = 0x57091000; // BNX2_CHIP_REV_Cx
+            val = 0x57092000; // BNX2_CHIP_REV_Cx
             DBGOUT(UNKNOWN,"...BNX2_MISC_ID (%x): %08x\n", reg, val);
             break;
         case 0x814: // BNX2_MISC_ENABLE_CLR_BITS
 //            val = 0x0;
             DBGOUT(UNKNOWN,"...BNX2_MISC_ENABLE_CLR_BITS (%x): %08x\n", reg, val);
+            break;
+        case 0x8c8: // BNX2_MISC_NEW_CORE_CTL
+            val = 0x0;
+            DBGOUT(UNKNOWN,"...BNX2_MISC_NEW_CORE_CTL: %08x\n", val);
             break;
         case 0x8e8: // BNX2_MISC_PPIO_EVENT
 //            val = 0x0;
@@ -1748,20 +1766,33 @@ static uint32_t bcm5709_read_config(PCIDevice *pci_dev,
             DBGOUT(UNKNOWN,"...BNX2_HC_ATTN_BITS_ENABLE (%x): %04x\n", reg, val);
             break;
         case 0x45000: // BNX2_TXP_CPU_MODE
+            val = d->cpu_txp[0];
             DBGOUT(UNKNOWN,"...BNX2_TXP_CPU_MODE (%x): %04x\n", reg, val);
             break;
         case 0x85000: // BNX2_TPAT_CPU_MODE
+            val = d->cpu_tpat[0];
             DBGOUT(UNKNOWN,"...BNX2_TPAT_CPU_MODE (%x): %04x\n", reg, val);
             break;
         case 0xc5000: // BNX2_RXP_CPU_MODE
+            val = d->cpu_rxp[0];
             DBGOUT(UNKNOWN,"...BNX2_RXP_CPU_MODE (%x): %04x\n", reg, val);
             break;
         case 0x105000: // BNX2_COM_CPU_MODE
+            val = d->cpu_com[0];
             DBGOUT(UNKNOWN,"...BNX2_COM_CPU_MODE (%x): %04x\n", reg, val);
             break;
         case 0x1400a0: // BNX2_MCP_TOE_ID
             val = (1L<<31); // BNX2_MCP_TOE_ID_FUNCTION_ID
             DBGOUT(UNKNOWN,"...BNX2_MCP_TOE_ID (%x): %04x\n", reg, val);
+            break;
+        case 0x160000: // BNX2_SHM_HDR_SIGNATURE
+//            val = 0x53530000;
+            DBGOUT(UNKNOWN,"...BNX2_SHM_HDR_SIGNATURE: %08x\n", val);
+            break;
+        case 0x160004: // BNX2_SHM_HDR_ADDR_0 + 4
+        case 0x160008: // BNX2_SHM_HDR_ADDR_0 + 8
+            val = 0x00167c00; // for the second head
+            DBGOUT(UNKNOWN,"...BNX2_SHM_HDR_ADDR_0(%08x): %08x\n", reg, val);
             break;
         default:
             if ((reg &~ 0xff) == 0x167c00) { // HOST_VIEW_SHMEM_BASE
@@ -1815,6 +1846,9 @@ static void bcm5709_write_config(PCIDevice *pci_dev, uint32_t addr, uint32_t val
             break;
         case 0x814: // BNX2_MISC_ENABLE_CLR_BITS
             DBGOUT(UNKNOWN, "BNX2_MISC_ENABLE_CLR_BITS: %08x\n", val_in);
+            break;
+        case 0x8c8: // BNX2_MISC_NEW_CORE_CTL
+            DBGOUT(UNKNOWN, "BNX2_MISC_NEW_CORE_CTL: %08x\n", val_in);
             break;
         case 0xc08: // BNX2_DMA_CONFIG
             DBGOUT(UNKNOWN, "BNX2_DMA_CONFIG: %08x\n", val_in);
@@ -2000,24 +2034,39 @@ static void bcm5709_write_config(PCIDevice *pci_dev, uint32_t addr, uint32_t val
                 if ((reg & 0xff) == 0x04) { // BNX2_DRV_MB
                     memcpy(d->bnx2_nvram + (reg & 0xff) + 4, &val_in, 4);
                 }
-                memcpy(d->bnx2_nvram + (reg & 0xff), &val_in, 4);
                 DBGOUT(UNKNOWN, "...SHMEM write %04x@%02x\n", val_in, reg & 0xff);
+                memcpy(d->bnx2_nvram + (reg & 0xff), &val_in, 4);
+                if ((reg & 0xff) == 0x04) { // on BNX2_FW_MB write update BNX2_DRV_MB
+                    memcpy(&val_in, d->bnx2_nvram + 0x08, 4);
+                    val_in &= ~0x00ff0000; // BNX2_FW_MSG_STATUS_MASK set to BNX2_FW_MSG_STATUS_OK
+                    memcpy(d->bnx2_nvram + 0x08, &val_in, 4);
+                }
                 break;
             } else if ((reg &~ 0xfff) == 0x45000) { // BNX2_TXP_CPU_MODE
-                DBGOUT(UNKNOWN, "TXP_CPU_MODE: %08x @ %03x\n", val_in, reg & 0xfff);
-                break;
+                reg &= 0xfff;
+                d->cpu_txp[reg >> 2] = val_in;
+                DBGOUT(UNKNOWN, "TXP_CPU_MODE: %08x @ %03x\n", val_in, reg);
+                return;
             } else if ((reg &~ 0xfff) == 0x85000) { // BNX2_TPAT_CPU_MODE
-                DBGOUT(UNKNOWN, "TPAT_CPU_MODE: %08x @ %03x\n", val_in, reg & 0xfff);
-                break;
+                reg &= 0xfff;
+                d->cpu_tpat[reg >> 2] = val_in;
+                DBGOUT(UNKNOWN, "TPAT_CPU_MODE: %08x @ %03x\n", val_in, reg);
+                return;
             } else if ((reg &~ 0xfff) == 0xc5000) { // BNX2_RXP_CPU_MODE
-                DBGOUT(UNKNOWN, "RXP_CPU_MODE: %08x @ %03x\n", val_in, reg & 0xfff);
-                break;
+                reg &= 0xfff;
+                d->cpu_rxp[reg >> 2] = val_in;
+                DBGOUT(UNKNOWN, "RXP_CPU_MODE: %08x @ %03x\n", val_in, reg);
+                return;
             } else if ((reg &~ 0xfff) == 0x105000) { // BNX2_COM_CPU_MODE
-                DBGOUT(UNKNOWN, "TPAT_COM_CPU_MODE: %08x @ %03x\n", val_in, reg & 0xfff);
-                break;
+                reg &= 0xfff;
+                d->cpu_com[reg >> 2] = val_in;
+                DBGOUT(UNKNOWN, "COM_CPU_MODE: %08x @ %03x\n", val_in, reg);
+                return;
             } else if ((reg &~ 0xfff) == 0x185000) { // BNX2_TPAT_CP_MODE
-                DBGOUT(UNKNOWN, "TPAT_CP_CPU_MODE: %08x @ %03x\n", val_in, reg & 0xfff);
-                break;
+                reg &= 0xfff;
+                d->cpu_cp[reg >> 2] = val_in;
+                DBGOUT(UNKNOWN, "TPAT_CP_CPU_MODE: %08x @ %03x\n", val_in, reg);
+                return;
             }
             else if ((reg &~ 0xfff) == 0x60000) { // BNX2_TXP_SCRATCH
                 DBGOUT(UNKNOWN, "TXP_SCRATCH: %08x @ %03x\n", val_in, reg & 0xfff);
@@ -2049,11 +2098,14 @@ static void bcm5709_write_config(PCIDevice *pci_dev, uint32_t addr, uint32_t val
         }
     } else if (addr == 0x78) {
         switch (val_in) {
+            case 0xb4: // BNX2_PCICFG_DEVICE_CONTROL
             case 0x0408:
+            case 0x0418: // BNX2_PCI_SWAP_DIAG0
             case 0x0800:
             case 0x0808: // BNX2_MISC_ID
             case 0x0810:
             case 0x0814: // BNX2_MISC_ENABLE_CLR_BITS
+            case 0x08c8:
             case 0x08e8: // BNX2_MISC_PPIO_EVENT
             case 0x08ec: // BNX2_MISC_DUAL_MEDIA_CTRL
             case 0x0c08:
